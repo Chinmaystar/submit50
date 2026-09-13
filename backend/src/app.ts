@@ -26,10 +26,13 @@ export function createApp(): express.Express {
         // allow same-origin/no-origin (curl, mobile apps), whitelisted frontends
         // and any *.vercel.app deployment of the hosted frontend
         const o = (origin ?? "").replace(/\/+$/, "");
-        const allowed =
-          !origin ||
-          config.frontendUrls.includes(o) ||
-          /\.[a-z0-9-]+\.vercel\.app$/i.test(new URL(o).hostname);
+        let vercelHost = false;
+        try {
+          vercelHost = new URL(o).hostname.endsWith(".vercel.app");
+        } catch {
+          vercelHost = false;
+        }
+        const allowed = !origin || config.frontendUrls.includes(o) || vercelHost;
         if (allowed) {
           cb(null, true);
         } else {
