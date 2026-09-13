@@ -23,8 +23,14 @@ export function createApp(): express.Express {
   app.use(
     cors({
       origin(origin, cb) {
-        // allow same-origin/no-origin (curl, mobile apps) and whitelisted frontends
-        if (!origin || config.frontendUrls.includes(origin.replace(/\/+$/, ""))) {
+        // allow same-origin/no-origin (curl, mobile apps), whitelisted frontends
+        // and any *.vercel.app deployment of the hosted frontend
+        const o = (origin ?? "").replace(/\/+$/, "");
+        const allowed =
+          !origin ||
+          config.frontendUrls.includes(o) ||
+          /\.[a-z0-9-]+\.vercel\.app$/i.test(new URL(o).hostname);
+        if (allowed) {
           cb(null, true);
         } else {
           cb(new HttpError(403, "Origin not allowed.", "CORS"));
