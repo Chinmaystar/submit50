@@ -1,0 +1,34 @@
+# Render Blueprint — Submit50 API (web service).
+# The judge worker stays on a Docker-capable VPS (Render has no Docker daemon);
+# Mongo + Redis are external (Atlas free / Upstash free) — set via env vars below.
+#
+# Apply: Render dashboard -> New -> Blueprint -> paste this file (repo must be connected).
+# Validate locally:  render blueprints validate render.yaml
+services:
+  - type: web
+    name: submit50-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: TRUST_PROXY
+        value: "1"
+      - key: ADMIN_EMAILS
+        value: admin@acmvnit.org
+      # Secrets — set these in the Render dashboard ("Manual" / no value):
+      - key: MONGODB_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: COOKIE_SECRET
+        sync: false

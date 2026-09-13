@@ -1,0 +1,111 @@
+# =============================================================================
+# Submit50 — local development / single-host deployment
+# =============================================================================
+# Quick start (infra + hot-reload dev servers on the host):
+#   docker compose up -d mongo redis
+#   npm run dev:api   (terminal 2)
+#   npm run dev:web   (terminal 3)
+#   npm run dev:judge (terminal 4, needs a local Docker daemon for the sandbox)
+#
+# Full stack in Docker:
+#   docker compose up --build            (api + web + mongo + redis)
+#   docker compose --profile judge up    (also runs the judge worker)
+#
+# SECURITY NOTE on the judge service: it mounts /var/run/docker.sock so the
+# worker can spawn sandbox containers. Only do this on the dedicated judge
+# host (a VPS with no app secrets). In production, prefer running the judge
+# process directly on that VPS (see deploy/judge.service) instead of
+# containerising it at all.
+# =============================================================================
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Build-only service that produces the sandbox image the judge runs code in.
+  # `docker compose build sandbox` then run the judge (host or profile below).
+  sandbox:
+    image: acm-judge-sandbox:latest
+    build: ./judge/sandbox
+    restart: "no"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGODB_URI: mongodb://mongo:27017/submit50
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@acmvnit.org}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+
+  # Optional: judge worker as a container (mounts the Docker socket — read the
+  # security note above). Requires the sandbox image to exist:
+  #   docker compose build sandbox
+  judge:
+    profiles: ["judge"]
+    build: ./judge
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://mongo:27017/submit50
+      REDIS_URL: redis://redis:6379
+      JUDGE_MODE: docker
+      JUDGE_CONCURRENCY: 2
+      SANDBOX_IMAGE: acm-judge-sandbox:latest
+      JUDGE_NAME: judge-compose-1
+    volumes:
+      # The judge needs to create sibling sandbox containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  mongo_data:
+  redis_data:

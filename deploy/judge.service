@@ -1,0 +1,20 @@
+[Unit]
+Description=Submit50 judge worker
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=judge
+WorkingDirectory=/opt/submit50/judge
+EnvironmentFile=/opt/submit50/judge/.env
+ExecStart=/usr/bin/node dist/worker.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/
+
+[Install]
+WantedBy=multi-user.target

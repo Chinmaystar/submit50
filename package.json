@@ -1,0 +1,22 @@
+{
+  "name": "submit50",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ACM VNIT coding assignment & autograding platform (MERN + BullMQ + Docker sandbox judge)",
+  "scripts": {
+    "dev:infra": "docker compose up -d mongo redis",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:judge": "npm --prefix judge run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "dev:all": "concurrently -n infra,api,judge,web -c blue,green,magenta,yellow \"docker compose up -d mongo redis\" \"npm --prefix backend run dev\" \"npm --prefix judge run dev\" \"npm --prefix frontend run dev\"",
+    "build": "npm --prefix backend run build && npm --prefix judge run build && npm --prefix frontend run build",
+    "test": "npm --prefix backend test && npm --prefix judge test",
+    "test:e2e": "playwright test",
+    "seed": "npm --prefix backend run seed",
+    "create-admin": "npm --prefix backend run create-admin --"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "concurrently": "^9.1.0"
+  }
+}
