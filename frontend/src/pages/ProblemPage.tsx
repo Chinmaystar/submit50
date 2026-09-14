@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { problemApi, submissionApi, apiErrorMessage } from "../services/api";
 import type { Problem, RunResponse, SampleTest } from "../types";
 import CodeEditor, { getDraft } from "../components/CodeEditor";
+import { LANGUAGE_LABELS, type LanguageId, type LanguageStarterMap } from "../lib/languages";
 import { LoadingPage, ErrorBanner, Spinner, StatusBadge, formatMs, formatKb } from "../components/ui";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -92,27 +93,44 @@ export default function ProblemPage() {
   const [problem, setProblem] = useState<Problem | null>(null);
   const [samples, setSamples] = useState<SampleTest[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [code, setCode] = useState("");
+  const [lang, setLang] = useState<LanguageId>("cpp17");
+  const [langs, setLangs] = useState<LanguageId[]>(["cpp17"]);
+  const [drafts, setDrafts] = useState<LanguageStarterMap>({});
+  const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [runResponse, setRunResponse] = useState<RunResponse | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const codeReady = useRef(false);
 
   useEffect(() => {
     setRunResponse(null);
     setActionError(null);
-    codeReady.current = false;
+    setReady(false);
     problemApi
       .get(id!)
       .then(({ problem: p, samples: s }) => {
+        const allowed = (p.allowedLanguages?.length ? p.allowedLanguages : ["cpp17"]) as LanguageId[];
+        const d = {} as LanguageStarterMap;
+        for (const l of allowed) {
+          // fall back to the pre-multi-language draft key for the legacy
+          // C++ editor so nobody loses work that was already saved.
+          const legacy = l === "cpp17" ? localStorage.getItem(`s50_draft_${id!}`) : null;
+          d[l] = getDraft(id!, l) ?? legacy ?? p.starterCode?.[l] ?? "";
+        }
         setProblem(p);
         setSamples(s);
-        setCode(getDraft(id!) ?? (p.starterCode || ""));
-        codeReady.current = true;
+        setLangs(allowed);
+        setDrafts(d);
+        setLang(allowed[0]);
+        setReady(true);
       })
       .catch((e) => setLoadError(apiErrorMessage(e)));
   }, [id]);
+
+  const code = drafts[lang] ?? "";
+  const applyCode = useCallback((l: LanguageId, v: string) => {
+    setDrafts((prev) => ({ ...prev, [l]: v }));
+  }, []);
 
   const run = useCallback(async () => {
     if (!id || running) return;
@@ -120,10 +138,10 @@ export default function ProblemPage() {
     setActionError(null);
     setRunResponse(null);
     try {
-      let resp = await submissionApi.run(id, code);
+      let resp = await submissionApi.run(id, code, lang);
       for (let i = 0; resp.pending && i < 4; i++) {
         await sleep(1500);
-        resp = await submissionApi.run(id, code);
+        resp = await submissionApi.run(id, code, lang);
       }
       setRunResponse(resp);
     } catch (e) {
@@ -131,20 +149,20 @@ export default function ProblemPage() {
     } finally {
       setRunning(false);
     }
-  }, [id, code, running]);
+  }, [id, code, lang, running]);
 
   const submit = useCallback(async () => {
     if (!id || submitting) return;
     setSubmitting(true);
     setActionError(null);
     try {
-      const { submissionId } = await submissionApi.submit(id, code);
+      const { submissionId } = await submissionApi.submit(id, code, lang);
       navigate(`/submissions/${submissionId}`);
     } catch (e) {
       setActionError(apiErrorMessage(e));
       setSubmitting(false);
     }
-  }, [id, code, navigate, submitting]);
+  }, [id, code, lang, navigate, submitting]);
 
   if (loadError) return <div className="p-8"><ErrorBanner message={loadError} /></div>;
   if (!problem) return <LoadingPage />;
@@ -157,7 +175,7 @@ export default function ProblemPage() {
           <span className="text-sm text-slate-500">{problem.points} pts</span>
         </div>
         <div className="flex flex-wrap gap-3 text-xs text-slate-500">
-          <span>{problem.language.toUpperCase()}</span>
+          <span>{langs.map((l) => LANGUAGE_LABELS[l]).join(" · ")}</span>
           <span>Time: {problem.timeLimitMs / 1000}s</span>
           <span>Memory: {problem.memoryLimitMb} MB</span>
           <span>Comparison: {problem.comparisonMode}</span>
@@ -197,13 +215,32 @@ export default function ProblemPage() {
 
         {/* editor + actions */}
         <div className="flex min-h-[60vh] flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {langs.length > 1 && (
+              <label className="flex items-center gap-2 text-xs text-slate-400">
+                Language
+                <select
+                  value={lang}
+                  onChange={(e) => setLang(e.target.value as LanguageId)}
+                  className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-brand-500 focus:outline-none"
+                >
+                  {langs.map((l) => (
+                    <option key={l} value={l}>
+                      {LANGUAGE_LABELS[l]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <span className="ml-auto text-xs text-slate-600">Drafts are kept per language</span>
+          </div>
           <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-800">
             <CodeEditor
               problemId={problem.id}
-              starterCode={problem.starterCode || ""}
-              language="cpp"
+              languageId={lang}
+              starterCode={problem.starterCode?.[lang] ?? ""}
               value={code}
-              onChange={setCode}
+              onChange={(c) => applyCode(lang, c)}
               height="100%"
             />
           </div>
@@ -214,7 +251,7 @@ export default function ProblemPage() {
             </button>
             <button
               onClick={() => void submit()}
-              disabled={running || submitting || !codeReady.current}
+              disabled={running || submitting || !ready}
               className="btn-primary"
             >
               {submitting ? <Spinner className="h-4 w-4" /> : null} Submit

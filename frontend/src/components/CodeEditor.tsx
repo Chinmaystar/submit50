@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
+import { LANGUAGE_LABELS, TO_MONACO, type LanguageId } from "../lib/languages";
 
 const DRAFT_PREFIX = "s50_draft_";
 
-function draftKey(problemId: string) {
-  return `${DRAFT_PREFIX}${problemId}`;
+function draftKey(problemId: string, language: LanguageId) {
+  return `${DRAFT_PREFIX}${problemId}_${language}`;
 }
 
-export function getDraft(problemId: string): string | null {
-  const v = localStorage.getItem(draftKey(problemId));
+export function getDraft(problemId: string, language: LanguageId): string | null {
+  const v = localStorage.getItem(draftKey(problemId, language));
   return v === null ? null : v;
 }
 
-export function clearDraft(problemId: string) {
-  localStorage.removeItem(draftKey(problemId));
+export function clearDraft(problemId: string, language: LanguageId) {
+  localStorage.removeItem(draftKey(problemId, language));
 }
 
 interface CodeEditorProps {
   problemId: string;
+  languageId: LanguageId;
   starterCode: string;
-  language?: string;
   value: string;
   onChange: (code: string) => void;
   height?: string;
@@ -27,8 +28,8 @@ interface CodeEditorProps {
 
 export default function CodeEditor({
   problemId,
+  languageId,
   starterCode,
-  language = "cpp",
   value,
   onChange,
   height = "100%",
@@ -54,23 +55,23 @@ export default function CodeEditor({
       onChange(code);
       if (code !== savedRef.current) {
         setDirty(true);
-        localStorage.setItem(draftKey(problemId), code);
+        localStorage.setItem(draftKey(problemId, languageId), code);
       }
     },
-    [onChange, problemId]
+    [onChange, problemId, languageId]
   );
 
   const reset = useCallback(() => {
     onChange(starterCode);
     setDirty(false);
-    localStorage.removeItem(draftKey(problemId));
-  }, [onChange, starterCode, problemId]);
+    localStorage.removeItem(draftKey(problemId, languageId));
+  }, [onChange, starterCode, problemId, languageId]);
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-3 py-1.5">
         <span className="text-xs text-slate-500">
-          {language.toUpperCase()}
+          {LANGUAGE_LABELS[languageId]}
           {dirty && <span className="ml-2 text-brand-400">• draft autosaved</span>}
         </span>
         <button onClick={reset} className="text-xs text-slate-500 hover:text-slate-300 transition">
@@ -80,7 +81,7 @@ export default function CodeEditor({
       <div className="flex-1 min-h-0">
         <Editor
           height={height}
-          language={language}
+          language={TO_MONACO[languageId]}
           theme="vs-dark"
           value={value}
           onChange={handleChange}

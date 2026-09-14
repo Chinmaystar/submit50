@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { problemApi, apiErrorMessage } from "../../services/api";
+import { LANGUAGE_LABELS, type LanguageId } from "../../lib/languages";
 import type { AdminTestCase } from "../../types";
 import { LoadingPage, ErrorBanner, EmptyState, Modal, Spinner, Badge } from "../../components/ui";
 import { ProblemForm } from "./ProblemForm";
@@ -122,6 +123,7 @@ export default function AdminProblemEdit() {
   const [bulkText, setBulkText] = useState("");
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [verifySolution, setVerifySolution] = useState("");
+  const [verifyLang, setVerifyLang] = useState<LanguageId>("cpp17");
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -141,6 +143,9 @@ export default function AdminProblemEdit() {
         setProblem(p.problem);
         setTests(t.tests);
         setPointsSummary(t.pointsSummary);
+        const allowed = (p.problem.allowedLanguages?.length ? p.problem.allowedLanguages : ["cpp17"]) as LanguageId[];
+        setVerifyLang(allowed[0]);
+        setVerifySolution(p.problem.referenceSolutions?.[allowed[0]] ?? "");
       })
       .catch((e) => setError(apiErrorMessage(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,7 +179,7 @@ export default function AdminProblemEdit() {
     setVerifyResult(null);
     setBulkError(null);
     try {
-      const r = await problemApi.verify(id!, verifySolution);
+      const r = await problemApi.verify(id!, verifySolution, verifyLang);
       setVerifyResult(r);
       refreshVerifyData();
     } catch (e) {
@@ -236,7 +241,7 @@ export default function AdminProblemEdit() {
             points: problem.points,
             timeLimitMs: problem.timeLimitMs,
             memoryLimitMb: problem.memoryLimitMb,
-            language: problem.language,
+            allowedLanguages: problem.allowedLanguages,
             starterCode: problem.starterCode,
             comparisonMode: problem.comparisonMode,
             order: problem.order,
@@ -381,6 +386,44 @@ export default function AdminProblemEdit() {
           <p className="text-xs text-slate-500">
             Compile and run a solution against <strong className="text-slate-300">all</strong> test cases before publishing.
           </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              Language
+              <select
+                value={verifyLang}
+                onChange={(e) => {
+                  const next = e.target.value as LanguageId;
+                  setVerifyLang(next);
+                  setVerifySolution(problem.referenceSolutions?.[next] ?? "");
+                }}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-brand-500 focus:outline-none"
+              >
+                {(problem.allowedLanguages?.length ? problem.allowedLanguages : ["cpp17"] as LanguageId[]).map((l) => (
+                  <option key={l} value={l}>
+                    {LANGUAGE_LABELS[l]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="text-xs text-slate-600">Verifies as {LANGUAGE_LABELS[verifyLang]}</span>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await problemApi.update(id!, {
+                    referenceSolutions: { ...(problem.referenceSolutions ?? {}), [verifyLang]: verifySolution },
+                  });
+                  flash();
+                } catch (e) {
+                  alert(apiErrorMessage(e));
+                }
+              }}
+              disabled={!verifySolution.trim()}
+              className="ml-auto btn-secondary !px-3 !py-1.5 text-xs"
+            >
+              Save as reference ({LANGUAGE_LABELS[verifyLang]})
+            </button>
+          </div>
           <textarea
             className="input min-h-[160px] font-mono text-xs"
             value={verifySolution}

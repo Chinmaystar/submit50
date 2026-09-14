@@ -7,7 +7,7 @@ import { Submission, TestResult, Problem, User } from "../models/index.js";
 import { createSubmission, runSampleTests } from "../services/submissionService.js";
 import { getRunQueue } from "../queues/index.js";
 import { QueueEvents } from "bullmq";
-import { RUN_QUEUE_NAME } from "../types.js";
+import { RUN_QUEUE_NAME, LANGUAGES, type LanguageId } from "../types.js";
 import { createRedisConnection } from "../config/redis.js";
 import { logger } from "../utils/logger.js";
 
@@ -24,10 +24,10 @@ problemSubmitRouter.post(
   "/:id/submit",
   requireAuth,
   submitLimiter(),
-  validate({ body: z.object({ code: z.string().min(1), language: z.string().max(20).optional() }) }),
+  validate({ body: z.object({ code: z.string().min(1), language: z.enum(LANGUAGES) }) }),
   asyncHandler(async (req, res) => {
-    const { code, language } = req.body as { code: string; language?: string };
-    const result = await createSubmission(req as AuthedRequest, req.params.id, code, language ?? "cpp17");
+    const { code, language } = req.body as { code: string; language: string };
+    const result = await createSubmission(req as AuthedRequest, req.params.id, code, language);
     res.status(202).json(result); // 202 Accepted — processing happens async
   })
 );
@@ -41,10 +41,10 @@ problemSubmitRouter.post(
   "/:id/run",
   requireAuth,
   runLimiter,
-  validate({ body: z.object({ code: z.string().min(1) }) }),
+  validate({ body: z.object({ code: z.string().min(1), language: z.enum(LANGUAGES) }) }),
   asyncHandler(async (req, res) => {
-    const { code } = req.body as { code: string };
-    const { jobId } = await runSampleTests(req as AuthedRequest, req.params.id, code);
+    const { code, language } = req.body as { code: string; language: string };
+    const { jobId } = await runSampleTests(req as AuthedRequest, req.params.id, code, language);
 
     const events = new QueueEvents(RUN_QUEUE_NAME, { connection: createRedisConnection() });
     try {
@@ -212,13 +212,16 @@ submissionsRouter.post(
     s.passedCount = 0;
     await s.save();
 
+    // Rejudge in the language the submission was originally written in.
+    const rejudgeLang = (LANGUAGES as readonly string[]).includes(s.language) ? (s.language as LanguageId) : "cpp17";
+
     const { enqueueSubmission } = await import("../queues/index.js");
     await enqueueSubmission({
       submissionId: String(s._id),
       problemId: String(problem._id),
       assignmentId: String(s.assignmentId),
       userId: String(s.userId),
-      language: "cpp17",
+      language: rejudgeLang,
       code: s.code,
       timeLimitMs: problem.timeLimitMs,
       memoryLimitMb: problem.memoryLimitMb,

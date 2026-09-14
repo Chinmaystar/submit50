@@ -12,6 +12,7 @@ import { Assignment, Classroom, Problem, TestCase, User } from "../models/index.
 import { logger } from "../utils/logger.js";
 import { config } from "../config/index.js";
 import { hashPassword } from "../utils/password.js";
+import { backfillProblemLanguages } from "../migrations/backfillProblemLanguages.js";
 
 /** Deterministic PRNG so every seed produces the exact same test suite. */
 function mulberry32(seed: number) {
@@ -118,6 +119,7 @@ async function upsertUser(name: string, email: string, role: "ADMIN" | "STUDENT"
 
 async function main(): Promise<void> {
   await connectMongo();
+  await backfillProblemLanguages();
 
   const adminEmail = config.adminEmails[0] ?? "admin@acmvnit.org";
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "admin123";
@@ -163,8 +165,13 @@ async function main(): Promise<void> {
       timeLimitMs: 2000,
       memoryLimitMb: 256,
       outputLimitKb: 1024,
-      language: "cpp17",
-      starterCode: `#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    // read input and print the maximum element\n    int n;\n    cin >> n;\n    long long best = LLONG_MIN;\n    for (int i = 0; i < n; i++) {\n        long long x;\n        cin >> x;\n        best = max(best, x);\n    }\n    cout << best << endl;\n    return 0;\n}\n`,
+      allowedLanguages: ["cpp17"],
+      starterCode: {
+        cpp17: `#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    // read input and print the maximum element\n    int n;\n    cin >> n;\n    long long best = LLONG_MIN;\n    for (int i = 0; i < n; i++) {\n        long long x;\n        cin >> x;\n        best = max(best, x);\n    }\n    cout << best << endl;\n    return 0;\n}\n`,
+      },
+      referenceSolutions: {
+        cpp17: `#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    int n;\n    cin >> n;\n    long long best = LLONG_MIN;\n    for (int i = 0; i < n; i++) {\n        long long x;\n        cin >> x;\n        best = max(best, x);\n    }\n    cout << best << endl;\n    return 0;\n}\n`,
+      },
       comparisonMode: "TOKEN",
       order: 1,
     });

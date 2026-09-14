@@ -6,6 +6,7 @@ import { badRequest, forbidden, notFound } from "../utils/errors.js";
 import { getSampleTests } from "./problemService.js";
 import { logger } from "../utils/logger.js";
 import type { AuthedRequest } from "../middleware/auth.js";
+import type { LanguageId } from "../types.js";
 
 const QUEUE_WAIT_MAX_MS = 10_000;
 
@@ -25,6 +26,9 @@ export async function createSubmission(
 
   const problem = await Problem.findById(problemId);
   if (!problem) throw notFound("Problem not found.");
+
+  // 2.5/4: the submitted language MUST be one the problem allows.
+  assertLanguageAllowed(problem, language);
 
   const assignment = await Assignment.findById(problem.assignmentId);
   if (!assignment) throw notFound("Assignment not found.");
@@ -46,19 +50,20 @@ export async function createSubmission(
     assignmentId: assignment._id,
     problemId: problem._id,
     code,
-    language: language || problem.language,
+    language,
     status: "QUEUED",
     totalScore: problem.points,
   });
 
-  // 8: enqueue the judge job (never executed in-process)
+  // 8: enqueue the judge job (never executed in-process) — the SAME language
+  // that was persisted; the stored and judged languages must never differ.
   try {
     await enqueueSubmission({
       submissionId: String(submission._id),
       problemId: String(problem._id),
       assignmentId: String(assignment._id),
       userId: String(user._id),
-      language: "cpp17",
+      language: language as LanguageId,
       code,
       timeLimitMs: problem.timeLimitMs,
       memoryLimitMb: problem.memoryLimitMb,
@@ -83,7 +88,8 @@ export async function createSubmission(
 export async function runSampleTests(
   req: AuthedRequest,
   problemId: string,
-  code: string
+  code: string,
+  language: string
 ): Promise<{ jobId: string }> {
   const user = req.user!;
   if (!code || Buffer.byteLength(code, "utf8") > config.maxCodeBytes) {
@@ -92,6 +98,8 @@ export async function runSampleTests(
 
   const problem = await Problem.findById(problemId);
   if (!problem) throw notFound("Problem not found.");
+
+  assertLanguageAllowed(problem, language);
 
   const assignment = await Assignment.findById(problem.assignmentId);
   if (!assignment) throw notFound("Assignment not found.");
@@ -104,7 +112,7 @@ export async function runSampleTests(
   const jobData: JudgeRunJobData = {
     userId: String(user._id),
     problemId: String(problem._id),
-    language: "cpp17",
+    language,
     code,
     timeLimitMs: problem.timeLimitMs,
     memoryLimitMb: problem.memoryLimitMb,
@@ -120,4 +128,12 @@ export async function runSampleTests(
 
   const jobId = await enqueueRun(jobData);
   return { jobId };
+}
+
+/** A submission/run must use a language the problem explicitly allows. */
+function assertLanguageAllowed(problem: { allowedLanguages?: string[] }, language: string): void {
+  const allowed = problem.allowedLanguages?.length ? problem.allowedLanguages : ["cpp17"];
+  if (!allowed.includes(language)) {
+    throw badRequest(`Language "${language}" is not allowed for this problem.`);
+  }
 }

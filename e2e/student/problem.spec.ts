@@ -31,7 +31,7 @@ test.describe("student problem page", () => {
     await expect(page.getByText("draft autosaved")).toBeVisible();
     const stored = await page.evaluate(
       (key) => localStorage.getItem(key),
-      `s50_draft_${id}`
+      `s50_draft_${id}_cpp17`
     );
     expect(stored).toContain("// e2e draft");
 

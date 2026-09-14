@@ -3,10 +3,14 @@ import { config } from "./config/index.js";
 import { connectMongo, disconnectMongo } from "./config/db.js";
 import { closeRedis, getRedis } from "./config/redis.js";
 import { logger } from "./utils/logger.js";
+import { backfillProblemLanguages } from "./migrations/backfillProblemLanguages.js";
 
 async function main(): Promise<void> {
   await connectMongo();
   getRedis().ping().catch((e) => logger.error(`Redis ping failed: ${e.message}`));
+
+  // Pre-model migration: legacy problems gain allowedLanguages + starter map.
+  await backfillProblemLanguages();
 
   const app = createApp();
   const server = app.listen(config.port, () => {

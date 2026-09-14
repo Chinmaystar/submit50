@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { problemApi, apiErrorMessage } from "../../services/api";
+import { LANGUAGES, LANGUAGE_LABELS, DEFAULT_STARTERS, type LanguageId, type LanguageStarterMap } from "../../lib/languages";
 import { ErrorBanner, Spinner } from "../../components/ui";
 
 export interface ProblemFormValues {
@@ -14,22 +15,11 @@ export interface ProblemFormValues {
   points: number;
   timeLimitMs: number;
   memoryLimitMb: number;
-  language: string;
-  starterCode: string;
+  allowedLanguages: LanguageId[];
+  starterCode: LanguageStarterMap;
   comparisonMode: "EXACT" | "TOKEN" | "FLOAT";
   order: number;
 }
-
-const STARTER_CPP = `#include <bits/stdc++.h>
-using namespace std;
-
-int main() {
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
-
-    return 0;
-}
-`;
 
 export function ProblemForm({
   initial,
@@ -51,21 +41,39 @@ export function ProblemForm({
     points: initial?.points ?? 10,
     timeLimitMs: initial?.timeLimitMs ?? 2000,
     memoryLimitMb: initial?.memoryLimitMb ?? 256,
-    language: initial?.language ?? "cpp17",
-    starterCode: initial?.starterCode ?? STARTER_CPP,
+    allowedLanguages: initial?.allowedLanguages?.length ? initial.allowedLanguages : ["cpp17"],
+    starterCode: initial?.starterCode ?? { cpp17: DEFAULT_STARTERS.cpp17 },
     comparisonMode: initial?.comparisonMode ?? "TOKEN",
     order: initial?.order ?? 1,
   });
+  const [starterLang, setStarterLang] = useState<LanguageId>("cpp17");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const set = <K extends keyof ProblemFormValues>(key: K, value: ProblemFormValues[K]) =>
     setV((prev) => ({ ...prev, [key]: value }));
 
+  const toggleLanguage = (id: LanguageId) => {
+    setV((prev) => {
+      const has = prev.allowedLanguages.includes(id);
+      return {
+        ...prev,
+        allowedLanguages: has
+          ? prev.allowedLanguages.filter((l) => l !== id)
+          : [...prev.allowedLanguages, id],
+      };
+    });
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
+    if (!v.allowedLanguages.length) {
+      setError("Select at least one language.");
+      setSaving(false);
+      return;
+    }
     try {
       const payload: ProblemFormValues = {
         ...v,
@@ -149,8 +157,53 @@ export function ProblemForm({
       </div>
 
       <div>
+        <label className="label">Allowed Languages *</label>
+        <div className="flex flex-wrap gap-3">
+          {LANGUAGES.map((id) => {
+            const checked = v.allowedLanguages.includes(id);
+            return (
+              <label
+                key={id}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                  checked ? "border-brand-500 bg-brand-500/10 text-slate-100" : "border-slate-700 text-slate-400"
+                }`}
+              >
+                <input type="checkbox" className="accent-brand-500" checked={checked} onChange={() => toggleLanguage(id)} />
+                {LANGUAGE_LABELS[id]}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
         <label className="label">Starter Code</label>
-        <textarea className="input min-h-[160px] font-mono text-xs" value={v.starterCode} onChange={(e) => set("starterCode", e.target.value)} />
+        <div className="mb-2 flex flex-wrap gap-2">
+          {LANGUAGES.map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setStarterLang(id)}
+              className={`rounded-md px-2.5 py-1 text-xs transition ${
+                starterLang === id ? "bg-brand-500/20 text-brand-300" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {LANGUAGE_LABELS[id]}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => set("starterCode", { ...v.starterCode, [starterLang]: DEFAULT_STARTERS[starterLang] })}
+            className="ml-auto text-xs text-slate-500 hover:text-slate-300"
+          >
+            Insert default template
+          </button>
+        </div>
+        <textarea
+          className="input min-h-[160px] font-mono text-xs"
+          value={v.starterCode[starterLang] ?? ""}
+          onChange={(e) => set("starterCode", { ...v.starterCode, [starterLang]: e.target.value })}
+        />
       </div>
 
       {error && <ErrorBanner message={error} />}

@@ -1,8 +1,9 @@
 # Submit50
 
-Coding assignment & autograding platform for ACM VNIT — C++17 (and C) problems,
-live "sample run" feedback, best-score scoring, and a hardened Docker sandbox
-judge. Scales to a few hundred students with a couple of judge workers.
+Coding assignment & autograding platform for ACM VNIT — multi-language problems
+(C17 / C++17 / Java 17), live "sample run" feedback, best-score scoring, and a
+hardened Docker sandbox judge. Scales to a few hundred students with a couple of
+judge workers.
 
 Built on the MERN stack:
 
@@ -18,7 +19,7 @@ Built on the MERN stack:
 backend/     Express API (auth, assignments, problems, submissions, admin, analytics)
 frontend/    React SPA (student + admin), Dockerfile + nginx.conf
 judge/       BullMQ worker: pulls jobs, compiles + runs in the sandbox, persists verdicts
-judge/sandbox/ Ubuntu image with only the g++ toolchain (no secrets, no network tools)
+judge/sandbox/ Ubuntu image with only the gcc/g++/JDK toolchains (no secrets, no network tools)
 ```
 
 ## Quick start (local development)
@@ -135,10 +136,17 @@ Docker socket — see the security note at the top of `docker-compose.yml`.
 ## Security model
 
 - **Sandbox**: each run is an ephemeral container from `judge/sandbox` started
-  with `--network none --cap-drop ALL --read-only --pids-limit 64`
+  with `--network none --cap-drop ALL --read-only --pids-limit 128`
   `--memory --memory-swap --cpus` and `--security-opt no-new-privileges`,
   running as the unprivileged `judge` (uid 1500) user. No Docker CLI, no
-  credentials, no network tools in the image.
+  credentials, no network tools in the image. Java runs with an
+  `-Xmx` capped at 85% of the container memory ceiling so heap exhaustion
+  surfaces as a clean `MEMORY_LIMIT_EXCEEDED`, and JVM `OutOfMemoryError`
+  stderr is classified the same way.
+- **Per-language problems**: each problem declares `allowedLanguages` and
+  per-language starter code; a submission is judged in exactly the language
+  it was submitted in (never silently coerced). Reference solutions are
+  stored per language and only ever exposed to admins.
 - **Hidden tests stay hidden**: judge reads inputs/outputs from MongoDB
   directly. The API returns hidden-test results as verdicts only —
   `TestResult.actualOutput` is served **only for sample tests**, and problem
@@ -172,7 +180,7 @@ Docker socket — see the security note at the top of `docker-compose.yml`.
 | `SANDBOX_IMAGE` | `acm-judge-sandbox:latest` | judge | built from `judge/sandbox` |
 | `JUDGE_NAME` | `judge-1` | judge | unique per worker instance |
 | `COMPILER_TIMEOUT_S` / `JUDGE_TIMEOUT_GRACE_S` | `30` / `2` | judge | compilation budget + per-test slack |
-| `JUDGE_PIDS_LIMIT` | `64` | judge | fork-bomb defense per sandbox |
+| `JUDGE_PIDS_LIMIT` | `128` | judge | fork-bomb defense per sandbox (JVM JIT/GC threads need headroom) |
 | `JUDGE_WORK_DIR` | `/tmp/submit50-judge-work` | judge | scratch root, auto-cleaned; **must be under `$HOME` on macOS+Colima** (bind mounts resolve inside the VM) |
 | `DOCKER_HOST` | unset | judge | docker CLI socket override; required on macOS+Colima: `unix://$HOME/.colima/<profile>/docker.sock` |
 | `VITE_API_URL` | unset (relative `/api`) | frontend | set only when the API is not on the same origin |
@@ -183,9 +191,10 @@ Docker socket — see the security note at the top of `docker-compose.yml`.
 - `GET /api/assignments`, `GET /api/assignments/:id`, leaderboards
 - `DELETE /api/assignments/:id` (admin) — cascades problems, test cases, submissions, scores
 - `DELETE /api/problems/:id` (admin) — cascades test cases, submissions, scores
-- `POST /api/problems/:id/run` — sample tests only, synchronous result or `{pending:true}`
-- `POST /api/problems/:id/submit` → `202 {submissionId, status:"QUEUED"}`; poll `GET /api/submissions/:id`
-- `POST /api/submissions/:id/rejudge` (admin)
+- `POST /api/problems/:id/run` — sample tests only, synchronous result or `{pending:true}`; body `{ code, language }` (`c17`/`cpp17`/`java17`)
+- `POST /api/problems/:id/submit` → `202 {submissionId, status:"QUEUED"}`; body `{ code, language }`; language must be in the problem's `allowedLanguages`
+- `POST /api/problems/:id/tests/verify` (admin) — run the reference solution (`{ referenceSolution, language? }`, defaults to the first allowed language) against all tests
+- `POST /api/submissions/:id/rejudge` (admin) — rejudges in the submission's original language
 - `GET/POST|PUT/PATCH/DELETE /api/admin/*` — problems, tests, students, submissions, analytics
 - `GET /api/health`
 

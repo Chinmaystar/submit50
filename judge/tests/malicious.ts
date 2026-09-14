@@ -13,6 +13,7 @@ import { judgeConfig } from "../src/config.js";
 interface Attack {
   name: string;
   code: string;
+  language?: string; // defaults to cpp17
   expect: "TLE" | "RE" | "OLE" | "MLE" | "WA" | "COMPILE";
   /** overall submission status we accept */
   statuses: string[];
@@ -29,7 +30,9 @@ const ATTACKS: Attack[] = [
     name: "infinite recursion",
     code: "void f(){ f(); } int main(){ f(); }",
     expect: "RE",
-    statuses: ["RUNTIME_ERROR", "MEMORY_LIMIT_EXCEEDED"], // stack overflow → SIGSEGV/SIGABRT
+    // -O2 turns this into a tail-call/trampoline infinite loop → TLE;
+    // otherwise it is a stack overflow. Both are safe containment.
+    statuses: ["RUNTIME_ERROR", "MEMORY_LIMIT_EXCEEDED", "TIME_LIMIT_EXCEEDED"],
   },
   {
     name: "huge memory allocation",
@@ -39,7 +42,9 @@ const ATTACKS: Attack[] = [
   },
   {
     name: "huge output",
-    code: `#include <bits/stdc++.h>\nint main(){ for(int i=0;i<100000000;i++) std::cout << "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n"; }`,
+    // C++ forbids a bare newline inside a string literal; escape it so the
+    // compile itself is not the attack.
+    code: `#include <bits/stdc++.h>\nint main(){ for(int i=0;i<100000000;i++) std::cout << "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n"; }`,
     expect: "OLE",
     statuses: ["OUTPUT_LIMIT_EXCEEDED", "TIME_LIMIT_EXCEEDED"],
   },
@@ -51,9 +56,11 @@ const ATTACKS: Attack[] = [
   },
   {
     name: "network access attempt",
-    code: `int system(const char*); int main(){ return system("curl -s -m 3 https://google.com > /tmp/out 2>&1"); }`,
+    code: `#include <cstdlib>\nint main(){ return std::system("curl -s -m 3 https://google.com > /tmp/out 2>&1"); }`,
     expect: "RE",
-    statuses: ["RUNTIME_ERROR", "TIME_LIMIT_EXCEEDED"],
+    // no network + no curl → command no-ops (0), fails (127), or hangs (TLE).
+    // Every path terminates with no bytes of host data on stdout.
+    statuses: ["RUNTIME_ERROR", "TIME_LIMIT_EXCEEDED", "WRONG_ANSWER"],
   },
   {
     name: "read /etc/passwd",
@@ -85,11 +92,48 @@ const ATTACKS: Attack[] = [
     expect: "COMPILE",
     statuses: ["COMPILATION_ERROR"],
   },
+  // ---- Java twins (java17) ----
+  {
+    name: "java thread bomb",
+    language: "java17",
+    code: `public class Main { public static void main(String[] a) { while (true) { new Thread(() -> { try { Thread.sleep(60000); } catch (InterruptedException e) {} }).start(); } } }`,
+    expect: "RE",
+    // native-thread OOM, pids-limit kill, or simply hitting the wall-clock limit
+    statuses: ["RUNTIME_ERROR", "MEMORY_LIMIT_EXCEEDED", "TIME_LIMIT_EXCEEDED"],
+  },
+  {
+    name: "java huge heap allocation",
+    language: "java17",
+    code: `public class Main { public static void main(String[] a) { byte[] b = new byte[Integer.MAX_VALUE - 8]; b[10] = 1; } }`,
+    expect: "MLE",
+    statuses: ["MEMORY_LIMIT_EXCEEDED", "RUNTIME_ERROR"], // OutOfMemoryError surface as MLE via stderr classifier
+  },
+  {
+    name: "java network access attempt",
+    language: "java17",
+    code: `public class Main { public static void main(String[] a) throws Exception { java.net.Socket s = new java.net.Socket("93.184.216.34", 80); System.out.println("CONN"); } }`,
+    expect: "RE",
+    statuses: ["RUNTIME_ERROR", "TIME_LIMIT_EXCEEDED"], // --network none → ConnectException
+  },
+  {
+    name: "java output flood",
+    language: "java17",
+    code: `public class Main { public static void main(String[] a) { while (true) System.out.println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); } }`,
+    expect: "OLE",
+    statuses: ["OUTPUT_LIMIT_EXCEEDED", "TIME_LIMIT_EXCEEDED"],
+  },
+  {
+    name: "java system exec attempt",
+    language: "java17",
+    code: `public class Main { public static void main(String[] a) throws Exception { Process p = Runtime.getRuntime().exec(new String[]{"curl", "-s", "-m", "3", "https://google.com"}); System.out.println("EXEC:" + (p == null)); } }`,
+    expect: "RE",
+    statuses: ["RUNTIME_ERROR"], // curl is not installed in the sandbox image
+  },
 ];
 
 async function runAttack(a: Attack): Promise<{ name: string; pass: boolean; detail: string }> {
   const outcome = await judgeSubmission({
-    language: "cpp17",
+    language: a.language ?? "cpp17",
     code: a.code,
     tests: [{ id: "t1", input: "", expectedOutput: "expected-output\n", points: 10, isSample: false }],
     timeLimitMs: 2000,
@@ -118,7 +162,11 @@ async function runAttack(a: Attack): Promise<{ name: string; pass: boolean; deta
     return { name: a.name, pass: false, detail: `SECRET/HOST LEAK detected: ${leaked.join(", ")}` };
   }
   if (!a.statuses.includes(status)) {
-    return { name: a.name, pass: false, detail: `expected ${a.statuses.join("|")} got ${status}` };
+    return {
+      name: a.name,
+      pass: false,
+      detail: `expected ${a.statuses.join("|")} got ${status}${outcome.compileError ? ` compileError=${JSON.stringify(outcome.compileError.slice(0, 300))}` : ""}`,
+    };
   }
   return { name: a.name, pass: true, detail: `verdict: ${status}` };
 }

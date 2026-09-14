@@ -1,5 +1,9 @@
 export type Role = "STUDENT" | "MENTOR" | "ADMIN";
 
+export type { LanguageId, LanguageStarterMap } from "./lib/languages";
+
+import type { LanguageId, LanguageStarterMap } from "./lib/languages";
+
 export interface User {
   id: string;
   name: string;
@@ -63,8 +67,9 @@ export interface Problem {
   points: number;
   timeLimitMs: number;
   memoryLimitMb: number;
-  language: string;
-  starterCode: string;
+  allowedLanguages: LanguageId[];
+  starterCode: LanguageStarterMap;
+  referenceSolutions?: LanguageStarterMap;
   comparisonMode: "EXACT" | "TOKEN" | "FLOAT";
   order: number;
 }

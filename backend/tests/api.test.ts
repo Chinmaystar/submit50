@@ -26,6 +26,14 @@ vi.mock("../src/queues/index.js", async (importOriginal) => {
     enqueueSubmission: vi.fn(async () => "job-1"),
     enqueueRun: vi.fn(async () => "job-run-1"),
     getRunQueue: vi.fn(() => ({
+      add: vi.fn(async () => ({
+        waitUntilFinished: vi.fn(async () => ({
+          status: "PASSED",
+          results: [
+            { testId: "0", index: 0, status: "PASSED", actualOutput: "", points: 0, earned: 0, executionTimeMs: 1, memoryUsedKb: 1 },
+          ],
+        })),
+      })),
       getJob: vi.fn(async () => ({
         waitUntilFinished: vi.fn(async () => ({
           status: "PASSED",
@@ -280,7 +288,7 @@ describe("assignments", () => {
     const submit = await request(app)
       .post(`/api/problems/${problem._id}/submit`)
       .set(studAuth)
-      .send({ code: "int main(){}" });
+      .send({ code: "int main(){}", language: "cpp17" });
     expect(submit.status).toBe(403);
   });
 
@@ -353,11 +361,50 @@ describe("submissions + scoring", () => {
   it("submit returns QUEUED and enqueues exactly one judge job", async () => {
     const { p } = await seedScenario();
     const auth = { Cookie: `${process.env.COOKIE_NAME ?? "s50_session"}=${await login("rahul@test.vnit.ac.in")}` };
-    const res = await request(app).post(`/api/problems/${p._id}/submit`).set(auth).send({ code: "int main(){}" });
+    const res = await request(app).post(`/api/problems/${p._id}/submit`).set(auth).send({ code: "int main(){}", language: "cpp17" });
     expect(res.status).toBe(202);
     expect(res.body.status).toBe("QUEUED");
     expect(res.body.submissionId).toBeTruthy();
     expect(enqueueSubmission).toHaveBeenCalledTimes(1);
+    expect(enqueueSubmission).toHaveBeenCalledWith(expect.objectContaining({ language: "cpp17" }));
+  });
+
+  it("rejects submissions in languages the problem does not allow", async () => {
+    const { p } = await seedScenario(); // default problem only allows cpp17
+    const auth = { Cookie: `${process.env.COOKIE_NAME ?? "s50_session"}=${await login("rahul@test.vnit.ac.in")}` };
+    const missing = await request(app).post(`/api/problems/${p._id}/submit`).set(auth).send({ code: "int main(){}" });
+    expect(missing.status).toBe(400);
+    const banned = await request(app).post(`/api/problems/${p._id}/submit`).set(auth).send({ code: "class Main {}", language: "java17" });
+    expect(banned.status).toBe(400);
+    expect(enqueueSubmission).not.toHaveBeenCalled();
+  });
+
+  it("multi-language problem accepts each allowed language and enqueues that language", async () => {
+    const { student, a } = await seedScenario();
+    await Problem.findOneAndUpdate(
+      { assignmentId: a._id },
+      { $set: { allowedLanguages: ["c17", "cpp17", "java17"], starterCode: { c17: "#include <stdio.h>", cpp17: "#include <bits/stdc++.h>", java17: "public class Main {}" } } }
+    ).lean();
+    const p = await Problem.findOne({ assignmentId: a._id });
+    const auth = { Cookie: `${process.env.COOKIE_NAME ?? "s50_session"}=${await login("rahul@test.vnit.ac.in")}` };
+    for (const language of ["c17", "cpp17", "java17"]) {
+      const res = await request(app).post(`/api/problems/${p!._id}/submit`).set(auth).send({ code: "int main(){}", language });
+      expect(res.status).toBe(202);
+      expect(enqueueSubmission).toHaveBeenLastCalledWith(expect.objectContaining({ language }));
+    }
+    // Unknown ids are rejected outright by the schema
+    const junk = await request(app).post(`/api/problems/${p!._id}/submit`).set(auth).send({ code: "x", language: "rust99" });
+    expect(junk.status).toBe(400);
+  });
+
+  it("persists the exact submitted language, not a default", async () => {
+    const { student, a, p } = await seedScenario();
+    await Problem.updateOne({ _id: p._id }, { $set: { allowedLanguages: ["c17", "cpp17", "java17"] } });
+    const auth = { Cookie: `${process.env.COOKIE_NAME ?? "s50_session"}=${await login("rahul@test.vnit.ac.in")}` };
+    const res = await request(app).post(`/api/problems/${p._id}/submit`).set(auth).send({ code: "public class Main {}", language: "java17" });
+    expect(res.status).toBe(202);
+    const sub = await Submission.findById(res.body.submissionId).lean();
+    expect(sub!.language).toBe("java17");
   });
 
   it("scoring: best score wins, not latest", async () => {
@@ -455,12 +502,95 @@ describe("run (sample tests)", () => {
     await TestCase.create({ problemId: p._id, input: "1\n", expectedOutput: "1\n", points: 0, isSample: true });
 
     const auth = { Cookie: `${process.env.COOKIE_NAME ?? "s50_session"}=${await login("runner@test.vnit.ac.in")}` };
-    const ok = await request(app).post(`/api/problems/${p._id}/run`).set(auth).send({ code: "int main(){}" });
+    const ok = await request(app).post(`/api/problems/${p._id}/run`).set(auth).send({ code: "int main(){}", language: "cpp17" });
     expect(ok.status).toBe(200);
 
     const big = "x".repeat(70 * 1024);
-    const tooBig = await request(app).post(`/api/problems/${p._id}/run`).set(auth).send({ code: big });
+    const tooBig = await request(app).post(`/api/problems/${p._id}/run`).set(auth).send({ code: big, language: "cpp17" });
     expect(tooBig.status).toBe(400);
+  });
+
+  it("rejects run requests in unsupported languages", async () => {
+    const a = await Assignment.create({ title: "A2b", isPublished: true });
+    const p = await Problem.create({ assignmentId: a._id, title: "Pb", statement: "s", points: 10 });
+    await TestCase.create({ problemId: p._id, input: "1\n", expectedOutput: "1\n", points: 0, isSample: true });
+    const auth = { Cookie: `${process.env.COOKIE_NAME ?? "s50_session"}=${await login("runner2@test.vnit.ac.in")}` };
+    const res = await request(app).post(`/api/problems/${p._id}/run`).set(auth).send({ code: "int main(){}", language: "java17" });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("verify (reference solution)", () => {
+  it("runs with the requested/default language and rejects disallowed languages", async () => {
+    const adminAuth = {
+      Cookie: `${process.env.COOKIE_NAME ?? "s50_session"}=${await login("admin@test.vnit.ac.in")}`,
+    };
+    const a = await Assignment.create({ title: "VerifyAs", isPublished: true });
+    const p = await Problem.create({ assignmentId: a._id, title: "V", statement: "s", points: 10 });
+    await TestCase.create({ problemId: p._id, input: "1\n", expectedOutput: "1\n", points: 0, isSample: true });
+
+    // language out of the allowed set → rejected before any queue work
+    const banned = await request(app)
+      .post(`/api/problems/${p._id}/tests/verify`)
+      .set(adminAuth)
+      .send({ referenceSolution: "int main(){}", language: "java17" });
+    expect(banned.status).toBe(400);
+
+    // no language → defaults to the first allowed (cpp17)
+    const ok = await request(app)
+      .post(`/api/problems/${p._id}/tests/verify`)
+      .set(adminAuth)
+      .send({ referenceSolution: "int main(){}" });
+    expect(ok.status).toBe(200);
+    expect(ok.body.totalTests).toBe(1);
+
+    const ok2 = await request(app)
+      .post(`/api/problems/${p._id}/tests/verify`)
+      .set(adminAuth)
+      .send({ referenceSolution: "int main(){}", language: "cpp17" });
+    expect(ok2.status).toBe(200);
+  });
+});
+
+describe("migration: backfillProblemLanguages", () => {
+  it("normalizes legacy problems to allowedLanguages + object starterCode", async () => {
+    const legacy = await Problem.collection.insertOne({
+      assignmentId: new (await import("mongoose")).Types.ObjectId(),
+      title: "Legacy Max",
+      statement: "s",
+      points: 10,
+      language: "cpp17",
+      starterCode: "legacy starter body",
+    });
+
+    const { backfillProblemLanguages } = await import("../src/migrations/backfillProblemLanguages.js");
+    await backfillProblemLanguages();
+    await backfillProblemLanguages(); // idempotent
+
+    const doc = await Problem.collection.findOne({ _id: legacy.insertedId });
+    expect(doc?.allowedLanguages).toEqual(["cpp17"]);
+    expect(doc?.starterCode).toEqual({ cpp17: "legacy starter body" });
+
+    // documents that arrive without any legacy fields still get a default
+    await backfillProblemLanguages();
+  });
+
+  it("sanitizes unknown languages down to a safe default", async () => {
+    await Problem.collection.insertOne({
+      assignmentId: new (await import("mongoose")).Types.ObjectId(),
+      title: "Odd",
+      statement: "s",
+      points: 10,
+      language: "brainfuck",
+      starterCode: "x",
+    });
+
+    const { backfillProblemLanguages } = await import("../src/migrations/backfillProblemLanguages.js");
+    await backfillProblemLanguages();
+
+    const doc = await Problem.collection.findOne({ title: "Odd" });
+    expect(doc?.allowedLanguages).toEqual(["cpp17"]);
+    expect(doc?.starterCode).toEqual({ cpp17: "x" });
   });
 });
 

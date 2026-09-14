@@ -37,8 +37,9 @@ export const judgeConfig = {
   /** Hard cap on captured stdout/stderr per run (bytes), independent of the
    *  problem's output limit so judge bookkeeping can't be blown up. */
   maxCaptureBytes: 8 * 1024 * 1024,
-  /** PIDs allowed inside one sandbox (fork-bomb defense). */
-  pidsLimit: num("JUDGE_PIDS_LIMIT", 64),
+  /** PIDs allowed inside one sandbox (fork-bomb defense). 64 is plenty for
+   *  C/C++; raised to 128 to leave headroom for JVM GC/JIT threads. */
+  pidsLimit: num("JUDGE_PIDS_LIMIT", 128),
   /* Scratch root for per-job compile dirs (auto-cleaned). Bind mounts are
    * resolved inside the Docker daemon: macOS/Colima only shares $HOME, so a
    * default under /tmp mounts as an empty dir there. Use a home path on macOS. */

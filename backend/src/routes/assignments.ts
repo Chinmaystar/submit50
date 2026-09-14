@@ -71,8 +71,9 @@ assignmentsRouter.get(
       }),
       problems: problems.map((p) => {
         const pub = toPublicProblem(p as never);
-        // List view: statement bodies are only served on the problem page
-        return { ...pub, statement: "", starterCode: "" };
+        // List view: statement bodies + starter code are only served on the
+        // problem page, but allowedLanguages is kept so rows can show badges.
+        return { ...pub, statement: "", starterCode: {} };
       }),
       state: effectiveState(a),
     });

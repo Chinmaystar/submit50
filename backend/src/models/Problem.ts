@@ -1,6 +1,12 @@
 import mongoose, { Schema, type Model, type InferSchemaType } from "mongoose";
 import { COMPARISON_MODES, LANGUAGES } from "../types.js";
 
+/**
+ * Per-language starter/reference payloads. The map keys are validated
+ * against LANGUAGES at the API layer before they reach the model.
+ */
+export const STARTER_KEYS = [...LANGUAGES] as string[];
+
 const problemSchema = new Schema(
   {
     assignmentId: { type: Schema.Types.ObjectId, ref: "Assignment", required: true, index: true },
@@ -15,8 +21,25 @@ const problemSchema = new Schema(
     timeLimitMs: { type: Number, default: 2000, min: 100, max: 60000 },
     memoryLimitMb: { type: Number, default: 256, min: 16, max: 2048 },
     outputLimitKb: { type: Number, default: 1024, min: 1, max: 16384 },
-    language: { type: String, enum: [...LANGUAGES], default: "cpp17" },
-    starterCode: { type: String, maxlength: 65536, default: "" },
+    /** Languages a student may submit this problem in (>= 1). */
+    allowedLanguages: {
+      type: [String],
+      enum: [...LANGUAGES],
+      default: ["cpp17"],
+      validate: [(v: string[]) => v.length > 0, "At least one language is required."],
+    },
+    /** Per-language starter templates — students only see the allowed ones. */
+    starterCode: {
+      c17: { type: String, maxlength: 65536, default: "" },
+      cpp17: { type: String, maxlength: 65536, default: "" },
+      java17: { type: String, maxlength: 65536, default: "" },
+    },
+    /** Per-language reference solutions used by the admin verify tool. Never exposed to students. */
+    referenceSolutions: {
+      c17: { type: String, maxlength: 131072, default: "" },
+      cpp17: { type: String, maxlength: 131072, default: "" },
+      java17: { type: String, maxlength: 131072, default: "" },
+    },
     comparisonMode: { type: String, enum: [...COMPARISON_MODES], default: "TOKEN" },
     // For FLOAT comparison mode (relative epsilon)
     floatTolerance: { type: Number, default: 1e-6 },

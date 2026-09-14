@@ -34,7 +34,7 @@ export type ComparisonMode = (typeof COMPARISON_MODES)[number];
 export const ROLES = ["STUDENT", "MENTOR", "ADMIN"] as const;
 export type Role = (typeof ROLES)[number];
 
-export const LANGUAGES = ["cpp17"] as const;
+export const LANGUAGES = ["c17", "cpp17", "java17"] as const;
 export type LanguageId = (typeof LANGUAGES)[number];
 
 /** Job payload the API puts on the BullMQ judge queue. */

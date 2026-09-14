@@ -5,6 +5,7 @@ import type {
   Analytics,
   Assignment,
   DashboardData,
+  LanguageId,
   LeaderboardRow,
   Problem,
   RunResponse,
@@ -109,24 +110,24 @@ export const problemApi = {
     api.patch(`/problems/${problemId}/tests/${testId}`, data).then((r) => r.data),
   deleteTest: (problemId: string, testId: string) =>
     api.delete(`/problems/${problemId}/tests/${testId}`).then((r) => r.data),
-  verify: (id: string, referenceSolution: string) =>
+  verify: (id: string, referenceSolution: string, language?: LanguageId) =>
     api
       .post<{
         totalTests: number;
         passed: number;
         failed: { index: number; isSample: boolean; status: string; input: string; expectedOutput: string; actualOutput: string }[];
         compileError?: string;
-      }>(`/problems/${id}/tests/verify`, { referenceSolution })
+      }>(`/problems/${id}/tests/verify`, { referenceSolution, language })
       .then((r) => r.data),
 };
 
 /* ---------------------------- submissions --------------------------- */
 
 export const submissionApi = {
-  submit: (problemId: string, code: string, language = "cpp17") =>
+  submit: (problemId: string, code: string, language: LanguageId) =>
     api.post<{ submissionId: string; status: string }>(`/problems/${problemId}/submit`, { code, language }).then((r) => r.data),
-  run: (problemId: string, code: string) =>
-    api.post<RunResponse>(`/problems/${problemId}/run`, { code }).then((r) => r.data),
+  run: (problemId: string, code: string, language: LanguageId) =>
+    api.post<RunResponse>(`/problems/${problemId}/run`, { code, language }).then((r) => r.data),
   list: (params: { problemId?: string; assignmentId?: string; userId?: string; status?: string; page?: number }) =>
     api
       .get<{ submissions: Submission[]; page: number; total: number; pages: number }>("/submissions", { params })

@@ -67,7 +67,7 @@ async function sandboxExec(opts: {
       captureLimitBytes: opts.captureLimitBytes,
       workDir: opts.workDir,
       cpuSeconds: opts.cpuSeconds,
-      name: `s50-${opts.label}-${randomUUID().slice(0, 8)}`,
+      name: `s50-${opts.label.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 48)}-${randomUUID().slice(0, 8)}`,
     });
     return r;
   }
@@ -138,7 +138,7 @@ export async function judgeSubmission(req: JudgeRequest): Promise<JudgeOutcome> 
     await fs.mkdir(path.join(workDir, "bin"), { recursive: true, mode: 0o777 });
     const compile = await sandboxExec({
       workDir,
-      cmd: lang.compileCmd(outPath),
+      cmd: lang.compileCmd(outPath, `/work/${lang.sourceFileName}`),
       timeLimitMs: judgeConfig.compilerTimeoutMs,
       memoryLimitMb: 1024,
       captureLimitBytes: 64 * 1024,
@@ -176,8 +176,8 @@ export async function judgeSubmission(req: JudgeRequest): Promise<JudgeOutcome> 
     for (const test of req.tests) {
       const runCmd =
         judgeConfig.mode === "docker"
-          ? [TIME_CMD, "-f", TIME_FORMAT, ...lang.runCmd(outPath)]
-          : lang.runCmd(outPath);
+          ? [TIME_CMD, "-f", TIME_FORMAT, ...lang.runCmd(outPath, { memoryLimitMb: req.memoryLimitMb })]
+          : lang.runCmd(outPath, { memoryLimitMb: req.memoryLimitMb });
 
       const result = await sandboxExec({
         workDir,
@@ -201,8 +201,13 @@ export async function judgeSubmission(req: JudgeRequest): Promise<JudgeOutcome> 
       if (result.timedOut) status = "TIME_LIMIT_EXCEEDED";
       else if (result.oomKilled) status = "MEMORY_LIMIT_EXCEEDED";
       else if (result.outputTruncated && result.exitCode === 0) status = "OUTPUT_LIMIT_EXCEEDED";
-      else if (result.exitCode !== 0) status = "RUNTIME_ERROR";
-      else {
+      else if (result.exitCode !== 0) {
+        // Java heap exhaustion surfaces as a thrown OutOfMemoryError with exit
+        // code 1 — indistinguishable from a normal runtime error, but it IS a
+        // memory limit hit. C/C++ already get MEMORY_LIMIT_EXCEEDED via SIGKILL
+        // (137)/allocator abort (134) in dockerRunner.
+        status = /OutOfMemoryError/.test(result.stderr) ? "MEMORY_LIMIT_EXCEEDED" : "RUNTIME_ERROR";
+      } else {
         const cmp = compareOutput(req.comparisonMode, test.expectedOutput, result.stdout, req.floatTolerance);
         status = cmp.passed ? "PASSED" : "WRONG_ANSWER";
       }

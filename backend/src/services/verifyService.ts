@@ -26,9 +26,12 @@ export interface VerifyResult {
  * acceptable here because it's an admin debugging tool, and execution still
  * happens exclusively inside the sandbox worker.
  */
-export async function verifyProblemSolution(problemId: string, referenceSolution: string): Promise<VerifyResult> {
+export async function verifyProblemSolution(problemId: string, language: string, referenceSolution: string): Promise<VerifyResult> {
   const problem = await Problem.findById(problemId);
-  if (!problem) throw badRequest("Problem not found");
+  if (!problem) throw badRequest("Problem not found.");
+
+  const allowed = problem.allowedLanguages?.length ? problem.allowedLanguages : ["cpp17"];
+  if (!allowed.includes(language)) throw badRequest("Language not allowed for this problem.");
 
   const tests = await TestCase.find({ problemId: problem._id }).sort({ isSample: -1, order: 1 }).lean();
   if (tests.length === 0) throw badRequest("Add test cases before verifying.");
@@ -37,7 +40,7 @@ export async function verifyProblemSolution(problemId: string, referenceSolution
   const job = await queue.add("verify", {
     userId: "admin-verify",
     problemId: String(problem._id),
-    language: "cpp17",
+    language,
     code: referenceSolution,
     timeLimitMs: problem.timeLimitMs,
     memoryLimitMb: problem.memoryLimitMb,
