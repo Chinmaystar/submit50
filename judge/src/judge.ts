@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { judgeConfig } from "./config.js";
 import { dockerRun } from "./runner/dockerRunner.js";
 import { localRun, assertLocalAllowed } from "./runner/localRunner.js";
+import { ensureJobWorkDir } from "./workdir.js";
 import { getLanguage } from "./languages/index.js";
 import { compareOutput, type ComparisonMode } from "./checkers/comparison.js";
 import type { SandboxResult } from "./runner/dockerRunner.js";
@@ -126,8 +127,9 @@ export interface JudgeRequest {
 
 export async function judgeSubmission(req: JudgeRequest): Promise<JudgeOutcome> {
   const lang = getLanguage(req.language);
-  const workDir = path.join(judgeConfig.workRoot, `job-${randomUUID()}`);
-  await fs.mkdir(workDir, { recursive: true, mode: 0o777 });
+  // world-writable job dir (incl. bin/) so the unprivileged sandbox uid
+  // (1500:1500) can compile and run — explicit chmod, immune to host umask
+  const workDir = await ensureJobWorkDir(judgeConfig.workRoot, `job-${randomUUID()}`);
 
   try {
     // 1. write source (the only untrusted artifact we persist)
@@ -135,7 +137,6 @@ export async function judgeSubmission(req: JudgeRequest): Promise<JudgeOutcome> 
 
     // 2. compile inside the sandbox
     const outPath = `/work/bin/${lang.compiledOutputName}`;
-    await fs.mkdir(path.join(workDir, "bin"), { recursive: true, mode: 0o777 });
     const compile = await sandboxExec({
       workDir,
       cmd: lang.compileCmd(outPath, `/work/${lang.sourceFileName}`),
