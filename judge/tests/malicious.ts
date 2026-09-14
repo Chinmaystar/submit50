@@ -9,6 +9,11 @@
  */
 import { judgeSubmission } from "../src/judge.js";
 import { judgeConfig } from "../src/config.js";
+import { ensureJobWorkDir } from "../src/workdir.js";
+import { dockerRun } from "../src/runner/dockerRunner.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 interface Attack {
   name: string;
@@ -131,6 +136,51 @@ const ATTACKS: Attack[] = [
   },
 ];
 
+/**
+ * Regression test for the critical sandbox boundary: a fresh per-job dir is
+ * mountable at /work and writable by the sandbox uid 1500:1500 (compile stage),
+ * while the shared workRoot stays restricted. This is the exact failure the
+ * real host hit ("cannot open output file /work/bin/main: Permission denied").
+ */
+async function verifyJobDirWritable(): Promise<{ pass: boolean; detail: string }> {
+  const rootStat = await fs.stat(judgeConfig.workRoot).catch(() => null);
+  const workDir = await ensureJobWorkDir(judgeConfig.workRoot, `probe-${randomUUID()}`);
+  try {
+    const r = await dockerRun({
+      image: judgeConfig.sandboxImage,
+      cmd: ["sh", "-c", "echo probe > /work/.probe && echo probe > /work/bin/.probe"],
+      stdin: undefined,
+      timeLimitMs: 15_000,
+      memoryLimitMb: 128,
+      captureLimitBytes: 4096,
+      workDir,
+      cpuSeconds: 10,
+      name: `s50-jobdir-probe-${randomUUID().slice(0, 8)}`,
+    });
+    let pass = r.exitCode === 0;
+    let detail = `uid1500 write exit=${r.exitCode}`;
+    if (pass) {
+      await fs.access(path.join(workDir, ".probe"));
+      await fs.access(path.join(workDir, "bin", ".probe"));
+      detail += ", probe files present on host";
+    } else {
+      detail += ` stderr=${r.stderr.slice(0, 120)}`;
+    }
+    if (rootStat) {
+      const now = await fs.stat(judgeConfig.workRoot);
+      if ((now.mode & 0o022) !== 0) {
+        pass = false;
+        detail += `; WARNING workRoot became group/other-writable (${(now.mode & 0o777).toString(8)})`;
+      } else {
+        detail += `; workRoot stays restricted (${(now.mode & 0o777).toString(8)})`;
+      }
+    }
+    return { pass, detail };
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 async function runAttack(a: Attack): Promise<{ name: string; pass: boolean; detail: string }> {
   const outcome = await judgeSubmission({
     language: a.language ?? "cpp17",
@@ -178,6 +228,19 @@ async function main(): Promise<void> {
   }
 
   let failed = 0;
+  const checks: { name: string; pass: boolean; detail: string }[] = [];
+  if (judgeConfig.mode === "docker") {
+    try {
+      const w = await verifyJobDirWritable();
+      checks.push({ name: "job-dir writable by uid 1500:1500", pass: w.pass, detail: w.detail });
+    } catch (err) {
+      checks.push({ name: "job-dir writable by uid 1500:1500", pass: false, detail: String(err) });
+    }
+  }
+  for (const c of checks) {
+    console.log(`${c.pass ? "PASS" : "FAIL"}  ${c.name.padEnd(34)} ${c.detail}`);
+    if (!c.pass) failed += 1;
+  }
   for (const a of ATTACKS) {
     try {
       const r = await runAttack(a);
@@ -190,10 +253,10 @@ async function main(): Promise<void> {
   }
 
   if (failed > 0) {
-    console.error(`\n${failed}/${ATTACKS.length} attacks were NOT contained safely.`);
+    console.error(`\n${failed}/${ATTACKS.length + checks.length} security checks were NOT satisfied.`);
     process.exit(1);
   }
-  console.log(`\nAll ${ATTACKS.length} attacks contained safely.`);
+  console.log(`\nAll ${ATTACKS.length + checks.length} security checks satisfied.`);
 }
 
 main().catch((e) => {
