@@ -8,6 +8,10 @@
     {
       "source": "/api/(.*)",
       "destination": "https://submit50-api.onrender.com/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/"
     }
   ]
 }
