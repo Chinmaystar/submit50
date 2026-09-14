@@ -35,11 +35,11 @@ export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?
   );
 }
 
-const STATUS_META: Record<string, { label: string; tone: string; icon: string }> = {
-  QUEUED: { label: "Queued", tone: "slate", icon: "⏳" },
-  COMPILING: { label: "Compiling", tone: "blue", icon: "⚙️" },
+const STATUS_META: Record<string, { label: string; tone: string; icon: string; spinner?: boolean }> = {
+  QUEUED: { label: "Queued", tone: "slate", icon: "⏳", spinner: true },
+  COMPILING: { label: "Compiling", tone: "blue", icon: "⚙️", spinner: true },
   COMPILATION_ERROR: { label: "Compilation Error", tone: "red", icon: "✗" },
-  RUNNING: { label: "Running", tone: "blue", icon: "⚡" },
+  RUNNING: { label: "Running", tone: "blue", icon: "⚡", spinner: true },
   ACCEPTED: { label: "Accepted", tone: "green", icon: "✓" },
   WRONG_ANSWER: { label: "Wrong Answer", tone: "red", icon: "✗" },
   TIME_LIMIT_EXCEEDED: { label: "Time Limit Exceeded", tone: "amber", icon: "⏱" },
@@ -55,7 +55,11 @@ export function StatusBadge({ status }: { status: SubmissionStatus | TestStatus 
   const meta = STATUS_META[status] ?? { label: status, tone: "slate", icon: "?" };
   return (
     <Badge tone={meta.tone}>
-      <span className="mr-1">{meta.icon}</span>
+      {meta.spinner ? (
+        <Spinner className="mr-1 h-3.5 w-3.5 text-slate-300" />
+      ) : (
+        <span className="mr-1">{meta.icon}</span>
+      )}
       {meta.label}
     </Badge>
   );
